@@ -1,0 +1,685 @@
+---
+title: "03_inspect_collaborator_panel"
+author: "Niklas Rindtorff"
+output: 
+   BiocStyle::html_document2:
+    code_folding: hide
+    df_print: paged
+    toc_depth: 3
+    toc_float: true
+    fig_height: 6
+    fig_width: 9.5
+vignette: >
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+# Set some global knitr options
+library("knitr")
+opts_chunk$set(tidy=TRUE, tidy.opts=list(blank=FALSE, width.cutoff=60), cache=TRUE, messages=FALSE)
+```
+
+#Load packages
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(pheatmap)
+library(splots)
+library(patchwork)
+library(synergyfinder)
+library(ggsignif)
+library(broom)
+library(ggrepel)
+library(readxl)
+library(platetools)
+```
+
+#Load data
+
+```{r, warning=FALSE, message=FALSE}
+##read ctg data files
+ctg_data <- lapply(list.files('~/tas/data/ctg_data/collab_plates/', full.names=T, pattern = "1803"), 
+                   function(f) read_tsv(f, col_names=F, col_types = 'cci') %>%
+                     `colnames<-`(c('name', 'well', 'pcount')) %>% 
+                     mutate(screen = f %>% str_split(pattern = "/") %>% unlist %>% 
+                              tail(1) %>% substr(.,1,nchar(.)-4))) %>%
+  bind_rows() %>%
+  separate(screen, c("date", "operator", "mithras", "experiment_id"), sep = "_", remove = FALSE, extra = "merge") %>%
+  #now I need to do some cleaning of badly named CTG datasets. Clara did this manually. 
+  separate(experiment_id, c("organism", "id")) %>%
+  #I now join the barcode annotation data with the photon counts
+  left_join(., read_excel("~/tas/data/barcodes/Organoid-Screening-Database-and-Barcodes.xlsx", 
+    sheet = "Combinations") %>% drop_na() %>% 
+  rename(planned_date = `Screening Date`, assay = `Image/CTG`, id = barcode) %>% 
+  filter(Library == "L12")) %>%
+  #I manually changed the name D007T01V036L11DM2 to D007T01V035L11DM2 to match the annotation table
+  #join compound annotation data
+  full_join(., lapply(list.files('~/tas/data/annotations/l12', full.names=T, pattern = "csv"), 
+       function(f) read_csv(f)) %>% bind_rows() %>%
+    rename(well = destination.well, BlockID = drug_pair) %>% 
+      select(concentration_pair, BlockID, well, substance) %>% distinct() %>% 
+      separate(concentration_pair, c("Row", "Col"), sep = "_") %>% 
+      separate(Row, c("Row"), extra = "drop") %>% 
+      separate(Col, c("Col"), extra = "drop") %>% 
+      separate(BlockID, c("DrugRow", "DrugCol"), sep = 1, remove = FALSE)  %>%
+  separate(well, c("row", "col"), sep = 1, remove = FALSE) %>%
+  mutate(combination = if_else(is.na(substance), TRUE, FALSE))) %>%
+  #now I perform some further conditional formatting
+  #first I have to change some old names
+  mutate(line = paste0(Donor, Tumor)) %>%
+  rename(experiment = id) %>%
+  unite(id, c("date", "line", "Library", "experiment"), remove = FALSE) %>%
+  mutate(row_num = match(row, LETTERS[1:26]),
+         col_num = as.numeric(col)) %>%
+  rename(drug = substance)
+```
+
+#Inspect data
+First I gain an overview of the collected data. 
+
+```{r}
+ctg_data %>% 
+  select(id, pcount) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount %>% as.vector) %>%
+  plotScreen(., 2)
+```
+
+#Correction
+
+##Spatial effects
+
+Now I focus on column and row-wise effects. Row wise effects dominate clearly.
+
+```{r}
+ctg_data %>% ggplot(aes(row_num, pcount)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of rows") 
+
+```
+
+
+```{r}
+  #next figure
+  ctg_data %>% ggplot(aes(col_num, pcount)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of columns")
+```
+
+I apply a conservative row-wise loess fit for each plate
+
+```{r}
+## split data by plate and apply loess normalization
+ctg_loess <- ctg_data %>% dplyr::select(row_num, col_num, pcount, id) %>% 
+  # na values
+  drop_na() %>%
+  #set the ctrl column 13 to NA
+  #mutate(pcount = ifelse(col_num == 13, NA, pcount)) %>%
+  split(.$id) %>% lapply(function(s){
+  ## loess fit. family is 'symmetric' to be robust to outliers
+  fit <- loess(pcount ~ row_num + col_num, data=s, family='symmetric')
+  ## apply normalization
+  tibble(norm_fac = fit$fitted) %>% cbind(s %>% drop_na(),.) %>% 
+    mutate(pcount_norm = pcount - (norm_fac - median(norm_fac)))
+}) %>% bind_rows() %>% full_join(ctg_data)
+```
+
+Now I plot the results for rows and columns
+
+```{r}
+ctg_loess %>% ggplot(aes(row_num, pcount_norm)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of rows") 
+
+```
+
+```{r}
+  #next figure
+  ctg_loess %>% ggplot(aes(col_num, pcount_norm)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of columns")
+```
+
+Again I plot the overview map for all plates. I think I have been able to reduce spatial effects.
+
+```{r}
+ctg_loess %>% 
+  select(id, pcount_norm) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount %>% as.vector) %>%
+  plotScreen(., 2)
+```
+
+#QC
+
+Now I look at the distribution of controls in the first screening replicate.
+
+```{r, warning=FALSE}
+coi <- c("Staurosporine", "DMSO")
+
+ctg_loess %>%
+  mutate(line_date_exp = paste0(line, "_", date)) %>%
+  filter(drug %in% coi) %>%
+  ggplot(aes(drug, pcount_norm)) +
+  #geom_violin(aes(group = drug)) +
+  #geom_jitter(alpha = 0.7) +
+  geom_boxplot(width = 1) +
+  facet_grid(line ~ date) +
+  theme_bw()
+
+# ctg_loess %>%
+#   mutate(line_date_exp = paste0(line, "_", date)) %>%
+#   filter(drug %in% coi) %>%
+#   filter(combination == TRUE) %>%
+#   ggplot(aes(id, pcount_norm, color = drug)) +
+#   #geom_violin(aes(group = drug)) +
+#   geom_boxplot(alpha = 0.7) + 
+#   #facet_grid(line_date_exp ~ Library) + 
+#   #facet_wrap(~line) +
+#   theme_classic()
+```
+
+I was able to calculate z-factors. They seem robust for all plates. However, line 27 shows poorer performance across both screening dates.
+
+```{r, eval = TRUE}
+z_df <- ctg_loess %>%
+  filter(drug %in% coi) %>%
+  group_by(id, drug, combination, Library, line, date, experiment) %>%
+  summarise(sd = sd(pcount_norm, na.rm = TRUE),
+            mean = mean(pcount_norm, na.rm = TRUE)) %>%
+  group_by(id, combination, Library, line, date, experiment) %>%
+  summarise(zfactor = 1-((3*sum(sd))/abs(range(mean)[1]-range(mean)[2]))) %>%
+  mutate(qc = if_else(zfactor < 0.25, FALSE, TRUE))
+
+z_df %>% 
+  mutate(query = substr(Library, 1, 5), 
+         query_conc = substr(Library, 6, 6)) %>%
+  filter(combination != TRUE) %>%
+  arrange(zfactor) %>%
+  ungroup() %>%
+  mutate(id = factor(id, levels = id)) %>%
+  ggplot(aes(id, zfactor)) + 
+  geom_bar(stat = "identity") + 
+  theme_classic() + 
+  scale_y_continuous(limits = c(0,1)) + 
+  coord_flip()
+
+# z_df_anno <- z_df %>% ungroup%>% mutate(id = paste0(id, "_", combination)) %>% 
+#   dplyr::select(-experiment, -zfactor) %>%
+#   as.data.frame() %>% 
+#   remove_rownames() %>%
+#   column_to_rownames("id")
+# 
+# z_df %>% ungroup%>% mutate(id = paste0(id, "_", combination)) %>% dplyr::select(id, zfactor) %>% 
+#   arrange(zfactor) %>%
+#   as.data.frame() %>% 
+#   remove_rownames() %>%
+#   column_to_rownames("id") %>% 
+#   pheatmap(., cluster_cols = FALSE, annotation_row =  z_df_anno)
+```
+
+I prepare a publication style figure for the raw photon counts of uncombined controls
+
+```{r}
+coi <- c("DMSO", "Staurosporine")
+
+ctg_loess %>%
+  filter(drug %in% coi & combination == FALSE) %>%
+  ggplot(aes(id, pcount_norm)) +
+  geom_boxplot(aes(colour = drug), width =.2, position = "identity") + 
+  theme_classic() + 
+  #facet_grid(line~date) +
+  #scale_y_continuous(limits = c(-1,250000)) +
+  #ggtitle("Before DMSO normalization") + 
+  theme(axis.title.y=element_blank()) +
+  scale_color_manual(values=rev(c("#999999", "#000000"))) +
+  ylab("Photon count") +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() +
+  ggsave("collab_ctrls_raw_byplate_uncombined.pdf", width = 6, height = 4)
+  
+  # cor(use = "complete.obs")
+  # pheatmap()
+```
+
+
+
+
+Now I create a raw correlation plot for bowth replicates across all plates. 
+
+```{r}
+r <- ctg_loess %>%
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Staurosporine", "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  dplyr::select(line, Library, date, pcount_norm, well, ctrl) %>% 
+  unite(id, c("line", "Library", "well")) %>%
+  spread(date, pcount_norm) %>% 
+  rename(rep1 = `180320`) %>%
+  rename(rep2 = `180327`) %>%
+  dplyr::select(rep1, rep2) %>% 
+  as.matrix() %>%
+  cor() %>%
+  .["rep1", "rep2"]
+
+ctg_loess %>%
+  #filter(col_num != 13) %>% 
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Staurosporine", "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  dplyr::select(line, Library, date, pcount_norm, well, ctrl) %>% 
+  unite(id, c("line", "Library", "well")) %>%
+  spread(date, pcount_norm) %>% 
+  rename(rep1 = `180320`) %>%
+  rename(rep2 = `180327`) %>%
+  ggplot(aes(rep1, rep2)) + 
+  geom_point(alpha = 0.2) +
+  #geom_point(alpha = 0.2, aes(color = ctrl)) + 
+  #scale_color_manual(values=c("#E69F00", "#999999", "#56B4E9")) +
+  geom_abline(intercept = 0, slope = 1) +
+  theme_classic() + 
+  ggtitle(paste0("r (pearson) = ", r %>% round(2))) + 
+  xlab("replicate 1") + 
+  ylab("replicate 2") + 
+  scale_y_continuous(breaks = c(0, 250000, 500000, 750000)) + 
+  coord_fixed() + 
+  ggsave("collab_pearson_raw.pdf", width = 4, height = 4)
+  
+```
+
+I plot the distributions of photon counts for both plates before normalization.
+
+```{r}
+ctg_loess %>%
+    mutate(line_date_exp = paste0(line, "_", date)) %>%
+    ggplot(aes(date, pcount_norm)) +
+    geom_violin(aes(group = date,  color = date)) + 
+    #geom_jitter(alpha = 0.7) +
+    geom_boxplot(data = ctg_loess %>% filter(drug == "DMSO"), aes(group = date), width = 0.25) +
+    facet_grid(line ~ Library) +
+    theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Now I normalize all photon counts to their respective DMSO controls
+
+```{r}
+ctg_ln <- left_join(ctg_loess, ctg_loess %>% 
+  dplyr::select(id, drug, pcount_norm) %>%
+  filter(drug == "DMSO") %>% group_by(id) %>% 
+  summarise(neg_control_median = median(pcount_norm, na.rm = TRUE))) %>% 
+  mutate(viability = pcount_norm/neg_control_median)
+```
+
+Moreover, I crop the viability to be always >= 0. Values of <0 are an artifact of loess smoothing. 
+
+```{r}
+ctg_ln <- ctg_ln %>% mutate(viability = ifelse(viability < 0, 0, viability))
+```
+
+Now I repeat my diagnostic plots.
+
+```{r}
+ctg_ln %>% 
+    mutate(line_date_exp = paste0(line, "_", date)) %>%
+    ggplot(aes(date, viability)) +
+    geom_violin(aes(group = date,  color = date)) + 
+    #geom_jitter(alpha = 0.7) +
+    geom_boxplot(data = ctg_ln %>% filter(drug == "DMSO"), aes(group = date), width = 0.25) +
+    facet_grid(line ~ Library) +
+    theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+r <- ctg_ln %>%
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Staurosporine", "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  dplyr::select(line, Library, date, viability, well, ctrl) %>% 
+  unite(id, c("line", "Library", "well")) %>%
+  spread(date, viability) %>% 
+  rename(rep1 = `180320`) %>%
+  rename(rep2 = `180327`) %>%
+  dplyr::select(rep1, rep2) %>% 
+  as.matrix() %>%
+  cor() %>%
+  .["rep1", "rep2"]
+
+ctg_ln %>%
+  #filter(col_num != 13) %>% 
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Staurosporine", "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  dplyr::select(line, Library, date, viability, well, ctrl) %>% 
+  unite(id, c("line", "Library", "well")) %>%
+  spread(date, viability) %>% 
+  rename(rep1 = `180320`) %>%
+  rename(rep2 = `180327`) %>%
+  ggplot(aes(rep1, rep2)) + 
+  geom_point(alpha = 0.2) +
+  #geom_point(alpha = 0.2, aes(color = ctrl)) + 
+  #scale_color_manual(values=c("#E69F00", "#999999", "#56B4E9")) +
+  geom_abline(intercept = 0, slope = 1) +
+  theme_classic() + 
+  ggtitle(paste0("r (pearson) = ", r %>% round(2))) + 
+  xlab("replicate 1") + 
+  ylab("replicate 2") + 
+  scale_y_continuous(breaks = c(0, 0.5, 1, 1.5)) + 
+  geom_hline(yintercept = 1) + 
+  geom_vline(xintercept = 1) +
+  coord_fixed() + 
+  ggsave("collab_pearson_norm.pdf", width = 4, height = 4)
+```
+
+```{r}
+coi <- c("DMSO", "Staurosporine")
+
+ctg_ln %>%
+  filter(drug %in% coi & combination == FALSE) %>%
+  ggplot(aes(id, viability)) +
+  geom_boxplot(aes(colour = drug), width =.2, position = "identity") + 
+  theme_classic() + 
+  #facet_grid(line~date) +
+  #scale_y_continuous(limits = c(-1,250000)) +
+  #ggtitle("Before DMSO normalization") + 
+  theme(axis.title.y=element_blank()) +
+  scale_color_manual(values=rev(c("#999999", "#000000"))) +
+  ylab("Photon count") +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() +
+  ggsave("collab_ctrls_norm_byplate_uncombined.pdf", width = 6, height = 4)
+```
+
+#Calculate synergy 
+I consider using the "synergyfinder" package, published by He et al. at the FIMM. 
+First I have to wrangle the data into a standardized input format. For this I write an ugly function. 
+
+```{r}
+coi <- c("Staurosporine", "DMSO")
+
+syn_drug <- ctg_ln %>%
+    filter(!drug %in% coi) %>%
+    #filter(query != "L11DM") %>%
+    #filter(combination == TRUE) %>%
+    rename(rv = viability) %>%
+    #setup the easy stuff
+    dplyr::transmute(
+      #BlockID = paste(query, drug, sep = "_"),
+           Response = rv*100,
+           Replicate = ifelse(date == "180320", 1, 2),
+           DrugRow = DrugRow,
+           DrugCol = DrugCol,
+           #build matrix
+           Col = Col,
+           Row = Row,
+           #define concentrations
+           ConcRow = ifelse(Row == 6, 0, 25/(5^(as.numeric(Row)-1))), #assuming the initila concentration is 50
+           ConcCol = ifelse(Col == 6, 0, 25/(5^(as.numeric(Col)-1))),
+           ConcUnit = "uM",
+      line = line, 
+      BlockID = BlockID
+      
+           ) 
+# %>% 
+#   group_by(Replicate, Col, Row, line, BlockID, DrugRow, DrugCol, ConcRow, ConcCol, ConcUnit) %>% 
+#   summarise(Response = mean(Response))
+  
+  # #Next I add the DMSO controls for the query drug concentrations
+  # syn_drug <- full_join(syn_drug %>% drop_na(), syn_drug %>% filter(is.na(BlockID)) %>%
+  #                         group_by(DrugRow, Row, Replicate, line, DrugCol, Col, ConcRow, ConcCol, ConcUnit) %>% 
+  #                         summarise(Response = mean(Response, na.rm = TRUE))  %>% 
+  #   do(cbind(., BlockID = paste(.$DrugRow, syn_drug %>% filter(DrugCol != "DMSO") %>% .$DrugCol %>% unique, sep = "_"))))
+  # #Finally I add the last missing piece, the DMSO ~ DMSO control fields
+  # 
+```
+
+
+Now I define a wrapper function that can apply multiple synergy calculations and report the results in a tidy format. 
+For now I stick to calulating the average synergy scores.
+
+```{r, eval = TRUE}
+tidy_synergy = function(df, me){ lapply(as.list(me), function(m, f = df){
+  #hacky way of ignoring cases in which the synergy scores could not be calculated
+  return(tryCatch(f %>% 
+      ReshapeData(., data.type = "viability") %>%
+      #PlotDoseResponse() %>%
+      CalculateSynergy(method = m, correction = TRUE) %>%
+    tibble(BlockID = .$drug.pairs %>% simplify() %>% .[4],
+           method = .$method,
+           score_average = .$scores %>% .[[1]] %>% .[-1,-1] %>% simplify() %>% mean(),
+           score_sd = .$scores %>% .[[1]] %>% .[-1,-1] %>% simplify() %>% sd()) %>%
+    select(BlockID, method, score_average, score_sd) %>% distinct(), 
+    error=function(e) NULL))}
+) %>% bind_rows()
+  #PlotSynergy(type = "all")
+  }
+```
+
+I apply the function on the dataset and save/load it. 
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, eval = FALSE}
+collab_syn <- syn_drug %>%  group_by(line, Replicate , BlockID) %>% 
+  do(tidy_synergy(df = ., me = c("ZIP", "HSA", "Bliss", "Loewe"))) %>%
+  ungroup() %>%
+  #complete the df for scores that could not be calculated
+  mutate(method = as.factor(method),
+         line = as.factor(line)) %>% 
+  complete(BlockID, method, Replicate, line) %>%
+  mutate(score_average = ifelse(is.nan(score_average), NA, score_average))
+
+
+save(collab_syn, file = "collab_syn_complete.Rdata")
+```
+
+#Plot data
+##Plot synergy
+
+As an example I plot a complete treatment surface for one treatmetn of Trametinib + PRI
+
+```{r}
+library(plotly)
+boi = c("AB")
+
+tmp <- syn_drug %>% filter(line == "D007T01", BlockID == boi, Replicate == 1) %>% group_by(Replicate, Col, Row, line, BlockID, DrugRow, DrugCol, ConcRow, ConcCol, ConcUnit) %>% summarise(Response = mean(Response)) %>% ungroup %>% dplyr::select(Col, Row, Response) %>% spread(Row, Response) %>% as.matrix()
+
+class(tmp) <- "numeric"
+
+p <- plot_ly(z = ~tmp) %>% add_surface()
+p
+```
+
+I check how often for which synergy score no result could be calculated
+
+```{r}
+load("collab_syn_complete.Rdata")
+
+collab_syn %>% 
+  group_by(method) %>%
+  summarise(n = is.na(score_average) %>% sum())
+```
+
+I plot the calculated synergy scores
+
+```{r}
+collab_syn %>% mutate(Replicate = as.factor(Replicate)) %>% ggplot(aes(BlockID, score_average)) + geom_point(aes(color = Replicate, shape = line), size = 3) + theme_classic() + scale_color_manual(values = c("#4885ed", "#db3236")) + facet_wrap( ~ method) + geom_hline(yintercept = 0)
+```
+
+
+## Export treatment data
+
+```{r}
+syn_drug %>% 
+  group_by(Replicate, Col, Row, line, BlockID, DrugRow, DrugCol, ConcRow, ConcCol, ConcUnit) %>% 
+  summarise(Response = mean(Response)) %>% 
+  group_by(line, BlockID , Replicate) %>% do(ungroup(.) %>% dplyr::select(Col, Row, Response) %>% spread(Row, Response)) %>% rename(PRI_Vori_5FU_conc_6isminimum = Col) %>% rename(drug_pair = BlockID) %>% writexl::write_xlsx(., path = "~/tas/heatmap_collab_combis.xlsx")
+```
+
+
+## Plot treatment data
+Now I plot heatmaps for all treatments. 
+The heatmaps are in this order: 
+
+###Heatmaps
+
+```{r}
+syn_drug %>% 
+  group_by(Replicate, Col, Row, line, BlockID, DrugRow, DrugCol, ConcRow, ConcCol, ConcUnit) %>% 
+  summarise(Response = mean(Response)) %>% group_by(line, BlockID , Replicate) %>% do(ungroup(.) %>% dplyr::select(Col, Row, Response) %>% spread(Row, Response) %>% .[, -1]) %>% nest(-c(BlockID, line, Replicate)) %>% arrange(BlockID, line, Replicate) %>% dplyr::select(-data)
+
+
+syn_drug %>% 
+  group_by(Replicate, Col, Row, line, BlockID, DrugRow, DrugCol, ConcRow, ConcCol, ConcUnit) %>% 
+  summarise(Response = mean(Response)) %>% 
+  group_by(line, BlockID , Replicate) %>% do(ungroup(.) %>% dplyr::select(Col, Row, Response) %>% spread(Row, Response) %>% .[, -1]) %>% nest(-c(BlockID, line, Replicate)) %>% arrange(BlockID, line, Replicate) %>% 
+  mutate(data = map(data, ~ as.matrix(.x))) %>% pull(data) %>% 
+  walk( ~ pheatmap(.x, cluster_rows = FALSE, cluster_cols = FALSE))
+
+
+
+```
+
+###Dose-response curves
+
+Now I plot the dose-response curves for all treatment seperately
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+library(drc)
+library(forcats)
+tidy_drc_fit <- function(df){  
+  # predictions and confidence intervals.
+  org.fits <- expand.grid(conc=exp(seq(log(min(df$conc)), log(max(df$conc)), length=1000)))
+  
+  fits <- drc::drm(data = df, pc_norm ~ conc, fct=LL.4(), na.action = na.omit) %>%
+  predict(., newdata = org.fits, interval = "confidence")
+  
+  org.fits %>%
+    mutate(p = fits[,1],
+           pmin = fits[,2],
+           pmax = fits[,3],
+           line = df$line %>% unique(),
+           drug = df$drug %>% unique()) %>%
+    full_join(df) %>%
+  return(.)
+}
+
+
+coi <- c("C")
+
+fit_syn_drug <- syn_drug %>% 
+  mutate(conc = Row,
+         pc_norm = Response,
+         drug = DrugRow) %>%
+  filter(Col == 6) %>%
+  dplyr::select(line, drug, pc_norm, conc) %>%
+  #filter(line %in% loi, drug %in% coi) %>% 
+  mutate(conc = as.numeric(conc)) %>%
+  group_by(drug, line) %>%
+  do(., tidy_drc_fit(.)) %>%
+  rbind(., syn_drug %>% 
+  mutate(conc = Col,
+         pc_norm = Response,
+         drug = DrugCol) %>%
+  filter(Row == 6) %>%
+  dplyr::select(line, drug, pc_norm, conc) %>%
+  #filter(line %in% loi, drug %in% coi) %>% 
+  mutate(conc = as.numeric(conc)) %>%
+  group_by(drug, line) %>%
+  do(., tidy_drc_fit(.))) %>% 
+  ungroup() %>%
+  filter(conc <= 5) %>% # removing DMSO fit
+  mutate(drug = if_else(drug == "A", "Trametinib",
+                        if_else(drug == "B", "PRI-724",
+                                if_else(drug == "C", "UNC-0638", 
+                                        if_else(drug == "D", "Vorinostat", 
+                                                if_else(drug == "E", "Rosiglitazone",
+                                                        if_else(drug == "F", "5-FU", "no match"))))))) %>% 
+  mutate(drug = factor(drug, levels = c("Trametinib", "PRI-724", "UNC-0638", "Vorinostat", "Rosiglitazone", "5-FU")))
+
+```
+
+```{r}
+coi <- c("Trametinib", "PRI-724")
+
+fit_syn_drug %>%
+  filter(drug %in% coi) %>%
+  ggplot() + 
+  geom_point(aes(conc, pc_norm), color = "#ff9900", alpha = 0.4) + 
+  geom_line(aes(conc, p), color = "#146eb4", size = 1.2) +
+  theme_bw() + 
+  scale_y_continuous(limits = c(0,120)) + 
+  #geom_smooth(formula = y ~ x) + 
+  geom_hline(yintercept = 100) + 
+  #geom_hline(yintercept = 0) +
+  facet_grid(drug ~ line) + 
+  scale_x_reverse() + 
+  ylab("Relative Viability") + 
+  xlab("Concentration") + 
+  ggsave("AB_dose_respone.pdf", width = 4, height = 3)
+```
+
+```{r}
+coi <- c("UNC-0638", "Vorinostat")
+
+fit_syn_drug %>%
+  filter(drug %in% coi) %>%
+  ggplot() + 
+  geom_point(aes(conc, pc_norm), color = "#ff9900", alpha = 0.4) + 
+  geom_line(aes(conc, p), color = "#146eb4", size = 1.2) +
+  theme_bw() + 
+  scale_y_continuous(limits = c(0,120)) + 
+  #geom_smooth(formula = y ~ x) + 
+  geom_hline(yintercept = 100) + 
+  #geom_hline(yintercept = 0) +
+  facet_grid(drug ~ line) + 
+  scale_x_reverse() + 
+  ylab("Relative Viability") + 
+  xlab("Concentration") + 
+  ggsave("CD_dose_respone.pdf", width = 4, height = 3)
+```
+
+```{r}
+coi <- c("Rosiglitazone", "5-FU")
+
+fit_syn_drug %>%
+  filter(drug %in% coi) %>%
+  ggplot() + 
+  geom_point(aes(conc, pc_norm), color = "#ff9900", alpha = 0.4) + 
+  geom_line(aes(conc, p), color = "#146eb4", size = 1.2) +
+  theme_bw() + 
+  scale_y_continuous(limits = c(0,120)) + 
+  #geom_smooth(formula = y ~ x) + 
+  geom_hline(yintercept = 100) + 
+  #geom_hline(yintercept = 0) +
+  facet_grid(drug ~ line) + 
+  scale_x_reverse() + 
+  ylab("Relative Viability") + 
+  xlab("Concentration") + 
+  ggsave("EF_dose_respone.pdf", width = 4, height = 3)
+```
+
+
+#Abadoned approaches 
+
+I list steps that are now covered by B. Rasucher or other alternative approaches in the .Rmd below.
+
+```{r}
+knitr::knit_exit()
+```
+
+```{r, eval = FALSE}
+boi = c("CD")
+
+syn_drug %>% filter(line == "D007T01", BlockID == boi, Replicate == 1) %>%
+  ReshapeData(., data.type = "viability") %>%
+  PlotDoseResponse()
+```
+
+```{r, eval = FALSE}
+boi = c("AB")
+
+syn_drug %>% filter(line == "D007T01", BlockID == boi, Replicate == 1) %>%
+  ReshapeData(., data.type = "viability") %>%
+  PlotDoseResponse()
+```
+
+

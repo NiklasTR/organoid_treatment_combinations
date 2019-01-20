@@ -1,0 +1,212 @@
+---
+title: "external combination validation panel lib_generation"
+author: "Niklas Rindtorff"
+output: 
+   BiocStyle::html_document2:
+    code_folding: hide
+    df_print: paged
+    toc_depth: 3
+    toc_float: true
+    fig_height: 6
+    fig_width: 9.5
+vignette: >
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load data
+##Load libraries  
+
+```{r, warning=FALSE, message=FALSE}
+library(readxl)
+library(tidyverse)
+library(readr)
+```
+
+#Load Examples
+As before the library dispensing is divided into 3 parts. 
+As templates I load example files from the last library preparation round. 
+
+
+```{r, warning=FALSE}
+robot_cmd_1_dilu <- read_csv("~/promise/local_data/layouts/robotic_files/l08_ccp_v1/Solve_Compounds/Work_list_Step_3.csv")
+robot_cmd_2_drug <- read_csv("~/promise/local_data/layouts/robotic_files/l08_ccp_v1/robot_clinicalcancerpanel_worklist.csv") %>%
+  rename(drug = `Drug Name`)
+robot_cmd_3_ctrl <- read_csv("~/promise/local_data/layouts/robotic_files/l08_ccp_v1/Worklist_DMSO_Stauro_spotting.csv")
+```
+
+Example of step 1
+
+```{r}
+robot_cmd_1_dilu %>% head()
+```
+
+This example illustrates how compounds are sampled in the 2. step. 
+
+```{r}
+robot_cmd_2_drug %>% 
+  filter(drug == "Bortezomib")
+```
+
+Example of step 3
+
+```{r}
+robot_cmd_3_ctrl %>% head()
+```
+
+#Prepare protocol 
+The current protocol differs conserideably from former approaches as way fewer compounds will be dispensed but with a higher complexity. 
+
+##Step 1
+In this setup step 1 will be conducted manual or with already available tools from Beckman. 
+A deepwell plate will be filled and a rowwise dilution will be applied on some columns. 
+
+##Step 2
+This protocol will take 2*(384-60ctrls) commands to dispense the combinaitions.
+
+First I build a schematic tibble.
+```{r}
+step2 <- tibble(conc1 = paste(c(1:6), c("1-max", c(2:4), "5-min", "6-DMSO"), sep ="_")) %>% 
+  mutate(conc2 = conc1) %>% 
+  cbind(.,drug_pair = c("AB", "CD", "EF")) %>% #hack around vector length restrictions 
+  #I name the pairs by the rows in which the compounds will be pipetted
+  cbind(., rep = c(1:3)) %>% 
+  expand(conc1, conc2, drug_pair, rep) %>%
+  #Now I assign source wells etc. 
+  separate(drug_pair, c("row1", "row2"), remove = FALSE, sep =1) %>% 
+  separate(conc1, c("col1", "conc1"), sep = "_") %>%
+  separate(conc2, c("col2", "conc2"), sep = "_") %>%
+  arrange(drug_pair,rep) %>% 
+  unite(well1, row1, col1, sep = "") %>% 
+  unite(well2, row2, col2, sep = "")
+
+head(step2)
+```
+
+Now I reformat the table to end up with a robot command file
+
+First I take a look again at my target column names 
+```{r}
+colnames(robot_cmd_2_drug)
+```
+
+Now let's go. 
+First I need to give every combination a destination.well
+
+```{r}
+step2 <- step2 %>% 
+  mutate(destination.well = c(robot_cmd_2_drug$destination.well[1:324]) %>% sample()) %>% #I sample my destination wells from a plate layout that I used before in a random order. However, this library comprises less compound wells than the reference library that I showed before. Therfore I take the first 324 wells from this vector only.
+  #dplyr::select(-conc1, -conc2) %>%
+  gather(well, number, -drug_pair, -rep, -destination.well, -conc1, -conc2) %>% 
+  mutate(Destination_Plate = "384_Master",
+         Source_Position = "Master_Library_DWPlate",
+         volume = 30) %>% 
+  rename(source.well = number,
+         pipetting_iteration = well) %>% 
+  unite(concentration_pair, conc1, conc2)
+  
+colnames(step2)
+  
+```
+
+I take a final look at the table. 
+
+```{r}
+step2
+```
+
+
+###QC 
+
+I check how often every destination well is present in the dataset
+
+```{r}
+test <- step2 %>% group_by(destination.well) %>% 
+  summarise(n =n()) %>% filter(n ==2) %>% nrow()
+
+test == 324
+```
+
+I estimate the amount of compound which I need per well in the source plate
+
+```{r}
+test <- step2 %>% group_by(source.well, volume) %>% 
+  summarise(n = n()) %>% mutate(vol = volume * n) %>% .$vol
+
+test <- (test > 580) %>% sum() #600 ul minus pipetting mistakes
+test == 0
+```
+
+###Save protocol
+I save the step2 protocol as .csv
+
+```{r}
+write.csv(step2, file = "l12_ecvp_robot_cmd_2_drug_combi.csv")
+```
+
+##Step3
+Now I add the controls to the final library. 
+
+```{r}
+step3 <- tibble(substance = c(rep(c("DMSO"), each = c(40)), rep(c("Staurosporine"), each = c(20)))) %>% 
+  cbind(., source.well = c(rep(c("A7", "B7", "C7", "D7"), each = c(10)), rep(c("A8", "B8"), each = c(10)))) %>%
+#I add the compound source wells manually as not all susbtance can be drawn form one well.
+  mutate(destination.well = c(robot_cmd_2_drug$destination.well[325:nrow(robot_cmd_2_drug)], 
+                              robot_cmd_3_ctrl$destination.well) %>% sample()) %>%
+  mutate(Destination_Plate = "384_Master",
+         Source_Position = "Master_Library_DWPlate",
+         volume = 60)
+ 
+step3
+```
+
+###QC
+
+no destination well should be part of the step2 protocol
+
+```{r}
+test <- step3$destination.well %in% step2$destination.well %>% sum()
+test == 0
+```
+
+The volume should be as expected.
+
+```{r}
+test <- step3 %>% group_by(source.well, volume) %>% 
+  summarise(n = n()) %>% mutate(vol = n* volume) %>% .$vol
+
+test <- (test > 720) %>% sum() #600 ul minus pipetting mistakes
+test == 0
+```
+
+###Save protocol 
+
+I save the step3 protocol as .csv
+
+```{r}
+write.csv(step3, file = "l12_ecvp_robot_cmd_3_ctrl.csv")
+```
+
+
+#Final QC
+
+```{r}
+nrow(step2) + nrow(step3) == (324*2 + (384-324))
+```
+
+```{r, eval = FALSE}
+
+library(platetools)
+test <- tibble(well =  )
+
+step2 %>% unite(id, concentration_pair, drug_pair) %>% dplyr::select(id, destination.well) %>
+
+raw_map(data = ,
+        well = df$well,
+        plate = 384)
+```
+

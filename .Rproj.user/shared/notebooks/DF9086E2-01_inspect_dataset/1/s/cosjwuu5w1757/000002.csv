@@ -1,0 +1,7 @@
+"0","#I create a list for all possible combinations"
+"0","combn(1:5, 4) %>% split(., rep(1:ncol(.), each = nrow(.))) %>% "
+"0","  append(., combn(1:5, 3) %>% split(., rep(1:ncol(.), each = nrow(.)))) %>% "
+"0","  append(., combn(1:5, 2) %>% split(., rep(1:ncol(.), each = nrow(.)))) %>%"
+"0","  append(., combn(1:5, 5) %>% split(., rep(1:ncol(.), each = nrow(.)))) %>%"
+"0","  append(., combn(1:5, 1) %>% split(., rep(1:ncol(.), each = nrow(.)))) -> combinations"
+"0","names(combinations) <- combinations %>% lapply(.,paste, collapse = """") %>% unlist"

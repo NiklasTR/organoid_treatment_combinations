@@ -1,0 +1,18 @@
+TAS-07-0	flipped during robot handling	H24, P12
+TAS-27-1	severe pipetting mistake	H24, N21
+TAS-07-1	severe pipetting mistake	M03, H24
+TAS-19-0	NA	H24, P12
+TAS-27-0	NA	H24, P12
+TAS-07-4	40min delay	H24
+TAS-19-1	severe pipetting error	H24
+TAS-27-4	pipetting error corrected	H24
+TAS-19-4	NA	H24
+TAS-27-2	NA	D04, H24, O24, P12
+TAS-19-5	NA	024, H24, D04
+TAS-19-3	NA	024, H24, D04
+TAS-27-5	NA	024, H24, D04
+TAS-19-2	NA	024, H24, D04
+TAS-07-3	NA	H24
+TAS-07-2	NA	H24
+TAS-07-5	NA	024, H24, D04
+TAS-27-3	NA	024, H24, D04

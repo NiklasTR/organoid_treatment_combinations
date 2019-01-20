@@ -1,0 +1,5 @@
+"0","raw_data <- read.celfiles(filenames = file.path(raw_data_dir, "
+"0","                                                SDRF$Array.Data.File),"
+"0","                         verbose = FALSE, phenoData = SDRF)"
+"2","Error: checkChipTypes(filenames, verbose, ""affymetrix"", TRUE) is not TRUE
+"

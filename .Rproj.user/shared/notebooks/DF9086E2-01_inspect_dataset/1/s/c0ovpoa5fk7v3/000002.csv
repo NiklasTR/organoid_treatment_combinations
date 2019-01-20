@@ -1,0 +1,12 @@
+"0","coi <- c(""DMSO"", ""Stauro_500nM"")"
+"0","syn_mat <- prepare_synergy(ctg_lnt, coi)"
+"2","Joining, by = c(""line"", ""TAS_concentration"", ""Replicate"")
+"
+"2","Joining, by = c(""row_num"", ""col_num"", ""pcount"", ""id"", ""norm_fac"", ""pcount_norm"", ""screen"", ""date"", ""operator"", ""mithras"", ""experiment"", ""line"", ""TAS_concentration"", ""well"", ""drug"", ""row"", ""col"", ""Source_Position"", ""Source"", ""combination"", ""concentration"", ""ctrl"", ""rv"", ""rv_trim"", ""BlockID"", ""Response"", ""Replicate"", ""DrugRow"", ""DrugCol"", ""Col"", ""Row"", ""ConcRow"", ""ConcCol"", ""ConcUnit"")
+"
+"0","#I also determine the synergy for the trimmed dataset"
+"0","syn_mat_t <- prepare_synergy(ctg_lnt %>% dplyr::select(-rv) %>% rename(rv = rv_trim), coi)"
+"2","Joining, by = c(""line"", ""TAS_concentration"", ""Replicate"")
+"
+"2","Joining, by = c(""row_num"", ""col_num"", ""pcount"", ""id"", ""norm_fac"", ""pcount_norm"", ""screen"", ""date"", ""operator"", ""mithras"", ""experiment"", ""line"", ""TAS_concentration"", ""well"", ""drug"", ""row"", ""col"", ""Source_Position"", ""Source"", ""combination"", ""concentration"", ""ctrl"", ""rv"", ""BlockID"", ""Response"", ""Replicate"", ""DrugRow"", ""DrugCol"", ""Col"", ""Row"", ""ConcRow"", ""ConcCol"", ""ConcUnit"")
+"

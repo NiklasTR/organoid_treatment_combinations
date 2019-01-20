@@ -1,0 +1,15 @@
+"0","boi = c(""TAS-102_MK-8776/ SCH900776"")"
+"0","moi = ""ZIP"""
+"0","tas_syn %>%"
+"0","  mutate(boi = if_else(BlockID %in% boi, TRUE, FALSE)) %>% "
+"0","  filter(method == moi) %>%"
+"0","  ggplot(aes(as.factor(boi), score_average, group=boi)) +"
+"0","  geom_jitter(aes(color=line), width = 0.3) + "
+"0","  stat_summary(fun.y = 'mean', fun.ymin ='mean', fun.ymax='mean', colour = 'black', geom='crossbar', width=0.5) + "
+"0","  geom_signif(comparisons = list(c(""TRUE"", ""FALSE"")), method = ""t.test"") + "
+"0","  theme_classic() + "
+"0","  ggtitle(paste0(boi,"" method:"", moi))"
+"2","Ignoring unknown parameters: method"
+"2","Error in grid.newpage() : 
+  QuartzBitmap_Output - unable to open file '/Users/rindtorf/tas/.Rproj.user/shared/notebooks/DF9086E2-01_inspect_dataset/1/s/cyncs0qzx97k7_t/_rs_chunk_plot_002.png'
+"

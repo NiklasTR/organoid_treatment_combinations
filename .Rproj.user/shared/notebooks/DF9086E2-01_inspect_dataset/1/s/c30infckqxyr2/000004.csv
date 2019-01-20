@@ -1,0 +1,8 @@
+"0","coi <- c(""Stauro_500nM"", ""DMSO"")"
+"0","ctg_loess %>%"
+"0","  mutate(line_date_exp = paste0(line, ""_"", date, ""_"", experiment)) %>%"
+"0","  filter(drug %in% coi) %>%"
+"0","  ggplot(aes(drug, pcount_norm, color = combination)) +"
+"0","  geom_jitter(alpha = 0.7) + "
+"0","  facet_grid(line_date_exp ~ TAS_concentration) + "
+"0","  theme_bw()"

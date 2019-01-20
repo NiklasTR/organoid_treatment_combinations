@@ -1,0 +1,5 @@
+"0","tibble(complete = tas_syn$score_average,"
+"0","       wo_highest = tas_syn_l$score_average) %>%"
+"0","  ggplot(aes(complete, wo_highest)) + "
+"0","  geom_point() + "
+"0","  theme_classic()"

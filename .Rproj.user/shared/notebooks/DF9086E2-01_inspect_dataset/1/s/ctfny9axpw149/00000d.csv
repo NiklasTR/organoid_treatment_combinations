@@ -1,0 +1,3 @@
+"0","tibble(complete = tas_syn$score_average,"
+"0","       wo_highest = tas_syn_l$score_average) %>%"
+"0","  corrr::correlate()"

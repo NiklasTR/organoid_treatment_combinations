@@ -1,0 +1,11 @@
+"0","ctg_loess %>% ggplot(aes(row, pcount_norm)) + geom_point() + "
+"0","  geom_smooth() +"
+"0","  facet_wrap(~id) + theme_bw() + ggtitle(""Spatial effects of rows"") + "
+"0","  #next figure"
+"0","  ctg_loess %>% ggplot(aes(col, pcount_norm)) + geom_point() + "
+"0","  geom_smooth() +"
+"0","  facet_wrap(~id) + theme_bw() + ggtitle(""Spatial effects of columns"")"
+"2","`geom_smooth()` using method = 'loess' and formula 'y ~ x'
+"
+"2","`geom_smooth()` using method = 'loess' and formula 'y ~ x'
+"
