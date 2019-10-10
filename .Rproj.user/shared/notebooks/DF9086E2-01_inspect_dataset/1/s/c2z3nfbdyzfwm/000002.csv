@@ -1,6 +1,0 @@
-"0","ctg_ln <- ctg_loess %>%"
-"0","  full_join(., ctg_loess %>% filter(drug == ""DMSO"" & combination == FALSE) %>% group_by(id) %>% "
-"0","              summarise(ctrl = median(pcount_norm, na.rm = TRUE)) %>% ungroup()) %>%"
-"0","  group_by(id) %>% mutate(rv = pcount_norm/ctrl) %>% ungroup() "
-"2","Joining, by = ""id""
-"

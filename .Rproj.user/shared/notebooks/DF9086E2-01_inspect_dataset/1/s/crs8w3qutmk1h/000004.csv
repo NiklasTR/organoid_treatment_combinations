@@ -1,3 +1,0 @@
-"0","ctg_data %>% "
-"0","  select(id, pcount) %>% split(., .$id) %>% lapply(., function(f) f$pcount %>% as.vector) %>%"
-"0","  plotScreen(., 6)"

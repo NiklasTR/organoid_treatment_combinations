@@ -1,6 +1,0 @@
-"0","knitr::opts_chunk$set(echo = TRUE)"
-"0","knitr::opts_chunk$set(fig.width=12, fig.height=8) "
-"0","# Set some global knitr options"
-"0","library(""knitr"")"
-"2","package ‘knitr’ was built under R version 3.4.3"
-"0","opts_chunk$set(tidy=TRUE, tidy.opts=list(blank=FALSE, width.cutoff=60), cache=TRUE, messages=FALSE)"

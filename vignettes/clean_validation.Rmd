@@ -1,0 +1,674 @@
+---
+title: "Tidy and collection follow-up data"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(cowplot)
+library(pheatmap)
+library(splots)
+library(patchwork)
+library(synergyfinder)
+library(ggsignif)
+library(broom)
+library(ggrepel)
+library(readxl)
+library(platetools)
+library(PharmacoGx)
+#library(ggridges)
+library(reshape2)
+```
+
+I source a tidy synergy function. 
+
+```{r}
+library(synergyfinder)
+
+tidy_synergy = function(df, me){ lapply(as.list(me), function(m, f = df){
+  #hacky way of ignoring cases in which the synergy scores could not be calculated
+  return(tryCatch(f %>% 
+                    ReshapeData(., data.type = "viability") %>%
+                    #PlotDoseResponse() %>%
+                    CalculateSynergy(method = m, correction = TRUE) %>%
+                    tibble(BlockID = .$drug.pairs %>% simplify() %>% .[4],
+                           method = .$method,
+                           score_average = .$scores %>% .[[1]] %>% .[-1,-1] %>% simplify() %>% mean(),
+                           score_sd = .$scores %>% .[[1]] %>% .[-1,-1] %>% simplify() %>% sd()) %>%
+                    select(BlockID, method, score_average, score_sd) %>% distinct(), 
+                  error=function(e) NULL))}
+) %>% bind_rows()
+  #PlotSynergy(type = "all")
+}
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+ctg_data <- tibble(files = list.files(here("data/ctg_data/validation"), pattern = ".TXT"),
+       path = list.files(here("data/ctg_data/validation"), 
+                         pattern = ".TXT", 
+                         full.names = TRUE)) %>% 
+  mutate(data = map(path, ~ read_delim(.x, 
+    "\t", 
+    escape_double = FALSE, 
+    col_names = FALSE, 
+    trim_ws = TRUE) %>%
+      magrittr::set_colnames(c('name', 'well', 'pcount')))) %>% 
+  
+  #### Formatting columns
+  
+  separate(files, c("date", "operator", "mithras", "experiment_id"), sep = "_", remove = FALSE) %>%
+  mutate(experiment_id = substr(experiment_id, 1, nchar(experiment_id)-4)) %>%
+  # I renamed one file that had irregular name patterns: **mv 181030_AF_M2_D105T01V007L13.TXT 181030_AF_M2_D105T01V006L13.TX**. 
+  unnest(data) %>% 
+  mutate(row = substr(well, 1,1),
+         col = substr(well, 2,3),
+         col_num = as.numeric(col)) %>% 
+  
+  #### Adding annotation column 
+  left_join(., read_csv(here("anno/combi_validation_robot.csv")) %>%  
+  rename(well = destination.well) %>%
+  select(drug_pair_conc, well) %>%
+  separate(well, c("row", "col"), sep = 1, remove = FALSE) %>%
+  distinct() %>%
+  separate(drug_pair_conc, c("drug_1", "drug_2", "conc_1", "conc_2"), 
+           remove = FALSE, sep = "_")) %>%
+  
+  #### Adding addtional features
+  
+  mutate(id = experiment_id) %>%
+  mutate(row_num = match(row, LETTERS[1:26])) %>%
+  mutate(line = substr(id, 1, 7),
+         drug = paste0(drug_1, "_", drug_2)) %>% 
+  mutate(plate_no = substr(id, 9, nchar(id)-3) %>% as.numeric()) 
+
+ctg_data <- ctg_data %>%
+  left_join(., ctg_data %>% 
+              dplyr::select(line, plate_no) %>%
+              distinct() %>%
+              group_by(line) %>% 
+              mutate(replicate = if_else(plate_no == min(plate_no), 1,2)))
+  
+```
+
+
+First, I get an overview of the dataset. 
+
+```{r}
+pdf(file = "overview_valid_raw.pdf", width = 15, height = 4, compress = FALSE)
+ctg_data %>% 
+  select(id, pcount) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount %>% as.vector) %>%
+  plotScreen(., 10, do.names = TRUE, do.legend = FALSE)
+dev.off()
+
+ctg_data %>% 
+  select(id, pcount) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount %>% as.vector) %>%
+  plotScreen(., 10, do.names = TRUE, do.legend = FALSE)
+```
+
+
+Now I focus on column and row-wise effects. Row wise effects dominate clearly.
+
+```{r}
+ctg_data %>% ggplot(aes(row_num, pcount)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of rows") 
+
+```
+
+```{r}
+  #next figure
+  ctg_data %>% ggplot(aes(col_num, pcount)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of columns")
+```
+
+I apply a conservative loess fit for both columns and rows. 
+
+```{r}
+ctg_loess <- ctg_data %>% dplyr::select(row_num, col_num, pcount, id) %>% 
+  # na values
+  drop_na() %>%
+  #set the ctrl column 13 to NA
+  #mutate(pcount = ifelse(col_num == 13, NA, pcount)) %>%
+  split(.$id) %>% lapply(function(s){
+  ## loess fit. family is 'symmetric' to be robust to outliers
+  fit <- loess(pcount ~ row_num + col_num, data=s, family='symmetric')
+  ## apply normalization
+  tibble(norm_fac = fit$fitted) %>% cbind(s %>% drop_na(),.) %>% 
+    mutate(pcount_norm = pcount - (norm_fac - median(norm_fac)))
+}) %>% bind_rows() %>% full_join(ctg_data)
+```
+
+
+Now I plot the results for rows and columns
+
+```{r}
+ctg_loess %>% ggplot(aes(row_num, pcount_norm)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of rows") 
+
+```
+
+```{r}
+  #next figure
+  ctg_loess %>% ggplot(aes(col_num, pcount_norm)) + geom_point() + 
+  geom_smooth() +
+  facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of columns")
+```
+
+```{r}
+pdf(file = "overview_valid_norm.pdf", width = 15, height = 4, compress = FALSE)
+ctg_loess %>% 
+  select(id, pcount_norm) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount_norm %>% as.vector) %>%
+  plotScreen(., 10, do.names = TRUE, do.legend = FALSE)
+dev.off()
+
+ctg_loess %>% 
+  select(id, pcount_norm) %>% arrange(id) %>% split(., .$id) %>% lapply(., function(f) f$pcount_norm %>% as.vector) %>%
+  plotScreen(., 10, do.names = TRUE, do.legend = FALSE)
+
+```
+
+# QC
+
+Now I look at the distribution of controls in the first screening replicate.
+
+```{r, warning=FALSE}
+coi <- c("DMSO")
+
+ctg_loess %>%
+  filter(drug_1 %in% coi & drug_2 %in% coi) %>%
+  ggplot(aes(line, pcount_norm, color = date)) +
+  #geom_violin(aes(group = drug)) +
+  geom_jitter(alpha = 0.7, width = 0.1) +
+  #geom_boxplot(width = 30) +
+  #facet_wrap(~line) +
+  theme_cowplot() + 
+  coord_flip()
+
+# ctg_loess %>%
+#   mutate(line_date_exp = paste0(line, "_", date)) %>%
+#   filter(drug %in% coi) %>%
+#   filter(combination == TRUE) %>%
+#   ggplot(aes(id, pcount_norm, color = drug)) +
+#   #geom_violin(aes(group = drug)) +
+#   geom_boxplot(alpha = 0.7) + 
+#   #facet_grid(line_date_exp ~ Library) + 
+#   #facet_wrap(~line) +
+#   theme_classic()
+```
+
+There are both line and replicate level differences in viability. I normalize on a plate level. Before I move on, I plot the distribution of photnon counts for each plate. 
+
+```{r}
+ctg_loess %>%
+  ggplot(aes(pcount_norm, fill = date)) +
+  #geom_violin(aes(group = drug)) +
+  geom_histogram(position="identity", alpha = 0.4) +
+  #geom_boxplot(width = 30) +
+  facet_wrap(~line) +
+  theme_cowplot() + 
+  geom_vline(xintercept = 0)
+```
+
+I expect the highest concentration of taxanes to be completely lethal. 
+
+```{r}
+coi <- c("Docetaxel_DMSO", "DMSO_DMSO")
+
+ctg_loess %>%
+  filter(drug %in% coi) %>% 
+  filter(conc_1 == 1) %>%
+  ggplot(aes(drug_pair_conc, pcount_norm)) + 
+  geom_point() + 
+  facet_wrap(~ line) + 
+  theme_cowplot()
+```
+
+
+I calculate z-factors, as a reference point, I select the highest concentration pair 
+
+```{r, eval = TRUE}
+coi <- c("Docetaxel_DMSO", "DMSO_DMSO")
+
+z_df <- ctg_loess %>%
+  filter(drug %in% coi) %>%
+  filter(!(drug == coi[1] & conc_1 %in% c(3:5))) %>%
+  group_by(id, drug, line, date) %>%
+  summarise(sd = sd(pcount_norm, na.rm = TRUE),
+            mean = mean(pcount_norm, na.rm = TRUE)) %>%
+  group_by(id, line, date) %>%
+  summarise(zfactor = 1-((3*sum(sd))/abs(range(mean)[1]-range(mean)[2]))) %>%
+  mutate(qc = if_else(zfactor < 0.25, FALSE, TRUE))
+
+z_df %>% 
+  arrange(zfactor) %>%
+  ungroup() %>%
+  mutate(id = factor(id, levels = id)) %>%
+  ggplot(aes(zfactor, id)) + 
+  geom_point(aes(color =  line)) + 
+  theme_cowplot() 
+
+# z_df_anno <- z_df %>% ungroup%>% mutate(id = paste0(id, "_", combination)) %>% 
+#   dplyr::select(-experiment, -zfactor) %>%
+#   as.data.frame() %>% 
+#   remove_rownames() %>%
+#   column_to_rownames("id")
+# 
+# z_df %>% ungroup%>% mutate(id = paste0(id, "_", combination)) %>% dplyr::select(id, zfactor) %>% 
+#   arrange(zfactor) %>%
+#   as.data.frame() %>% 
+#   remove_rownames() %>%
+#   column_to_rownames("id") %>% 
+#   pheatmap(., cluster_cols = FALSE, annotation_row =  z_df_anno)
+```
+
+Now I create a correlation plot for both replicates across all plates except the column 13 combination wells. 
+
+```{r}
+r <- ctg_loess %>%
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  unite(id, c("line", "well")) %>%
+  dplyr::select(id, pcount_norm, replicate) %>% 
+  spread(replicate, pcount_norm) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  dplyr::select(rep1, rep2) %>% 
+  as.matrix() %>%
+  cor() %>%
+  .["rep1", "rep2"]
+
+ctg_loess %>%
+  
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  unite(id, c("line", "well")) %>%
+  dplyr::select(id, pcount_norm, replicate) %>% 
+  spread(replicate, pcount_norm) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  ggplot(aes(rep1, rep2)) + 
+  geom_point(alpha = 0.2) +
+  #geom_point(alpha = 0.2, aes(color = ctrl)) + 
+  #scale_color_manual(values=c("#E69F00", "#999999", "#56B4E9")) +
+  geom_abline(intercept = 0, slope = 1) +
+  #geom_hline(yintercept = 1) +
+  theme_classic() + 
+  ggtitle(paste0("r (pearson) = ", r %>% round(2))) + 
+  xlab("replicate 1") + 
+  ylab("replicate 2") + 
+  scale_y_continuous(breaks = c(0, 250000, 500000, 750000)) + 
+  coord_fixed() + 
+  ggsave("pearson_raw_valid.pdf", width = 4, height = 4)
+  
+  
+```
+
+
+#Normalization 
+
+At first glance, the majority of the screen is well behaved. I perform plate-wise noramlization to see wether I can also recover plates with differring plates.
+
+
+```{r}
+ctg_norm <- ctg_loess %>% 
+  left_join(., ctg_loess %>% 
+              filter(drug == "DMSO_DMSO") %>%
+            group_by(id) %>% 
+              summarise(dmso_solo_id = mean(pcount_norm))) %>%
+  mutate(viability = pcount_norm/dmso_solo_id) %>% 
+  #I crop the minimal viability to be zero
+  mutate(viability_uncropped = viability) %>% 
+  mutate(viability = if_else(viability < 0, 0, viability))
+```
+
+I plot the correlation again. 
+
+```{r}
+r <- ctg_norm %>%
+  mutate(ctrl = ifelse(drug == "DMSO_DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  unite(id, c("line", "well")) %>%
+  dplyr::select(id, viability, replicate) %>% 
+  spread(replicate, viability) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  dplyr::select(rep1, rep2) %>% 
+  as.matrix() %>%
+  cor() %>%
+  .["rep1", "rep2"]
+
+ctg_norm %>%
+  
+  mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
+  mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
+  #filter(drug %in% coi) %>%
+  unite(id, c("line", "well")) %>%
+  dplyr::select(id, viability_uncropped, replicate) %>% 
+  spread(replicate, viability_uncropped) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  ggplot(aes(rep1, rep2)) + 
+  geom_point(alpha = 0.2) +
+  #geom_point(alpha = 0.2, aes(color = ctrl)) + 
+  #scale_color_manual(values=c("#E69F00", "#999999", "#56B4E9")) +
+  geom_abline(intercept = 0, slope = 1) +
+  #geom_hline(yintercept = 1) +
+  theme_classic() + 
+  ggtitle(paste0("r (pearson) = ", r %>% round(2))) + 
+  xlab("replicate 1") + 
+  ylab("replicate 2") + 
+  scale_y_continuous(breaks = c(0, 0.5, 1, 1.5,2)) + 
+  scale_x_continuous(breaks = c(0, 0.5, 1, 1.5,2)) + 
+  geom_hline(yintercept = 1) + 
+  geom_vline(xintercept = 1) +
+  coord_fixed() + 
+  ggsave("pearson_norm_valid.pdf", width = 4, height = 4)
+  
+```
+
+To avoid the simpson paradox, I also plot line-wise correlations.
+
+
+```{r}
+ctg_norm %>%
+  dplyr::select(id, viability, well) %>%
+  spread(id, viability) %>% 
+  dplyr::select(-well) %>% 
+  as.matrix() %>% 
+  cor() %>% 
+  pheatmap::pheatmap()
+```
+
+ Synergy calculations are missled in cases where are treatment is actually boosting overall viability. Because of this effect, I set the maximum viability to 1. 
+ 
+```{r}
+ctg_norm <- ctg_norm %>% 
+  mutate(viability = if_else(viability > 1, 1, viability))
+```
+
+
+# Calculating synergy scores
+I consider using the "synergyfinder" package, published by He et al. at the FIMM. 
+First I have to wrangle the data into a standardized input format. This is an ugly peace of code. 
+
+```{r, warning=FALSE, message=FALSE, eval = TRUE}
+df <- ctg_norm
+#not a universal function
+syn_table <- df %>%
+  #filter(drug != "DMSO_DMSO") %>%
+  #filter(drug_1 != "DMSO") %>%
+  #filter(drug_2 != "DMSO") %>%
+  rename(rv = viability) %>%
+  #setup the easy stuff
+  dplyr::transmute(
+    BlockID = paste(drug, sep = "_"),
+         Response = rv*100,
+         Replicate = replicate,
+         DrugRow = drug_1,
+         DrugCol = drug_2,
+         #build matrix
+         Row = ifelse(drug_1 != "DMSO", as.numeric(conc_1), 6),
+         Col = ifelse(drug_2 != "DMSO", as.numeric(conc_2), 6),
+         #define concentrations
+         ConcRow = 10/(5^(as.numeric(conc_1)-1)),
+         ConcCol = 10/(5^(as.numeric(conc_2)-1)),
+         ConcRow = ifelse(drug_1 != "DMSO", ConcRow, 0),
+         ConcCol = ifelse(drug_2 != "DMSO", ConcCol, 0),
+         ConcUnit = "uM",
+    line = line
+         ) %>%  arrange(BlockID, Replicate, Row) 
+
+#Next I add the DMSO controls
+syn_table_p2 <- rbind(syn_table %>% filter(DrugCol != "DMSO"),
+                      
+                      syn_table %>% filter(DrugCol == "DMSO") %>%
+                      select(-BlockID)  %>%
+                      mutate(BlockID = map(DrugRow , ~ syn_table %>% 
+                                       filter(DrugCol != "DMSO" & grepl(BlockID, pattern = .x)) %>% 
+                         distinct() %>%
+                         dplyr::select(BlockID))) %>% unnest() %>% distinct(),
+                      
+                      syn_table %>% filter(BlockID == "DMSO_DMSO") %>%
+                      select(-BlockID)  %>%
+                      mutate(BlockID = map(DrugRow , ~ syn_table %>% 
+                                       filter(DrugCol != "DMSO" & DrugRow != "DMSO") %>% 
+                         distinct() %>%
+                         dplyr::select(BlockID))) %>% unnest() %>% distinct() 
+  )
+
+syn_table <- syn_table_p2 %>% 
+  group_by(BlockID, Replicate, DrugRow,
+           DrugCol, Row, Col, ConcRow, ConcCol, ConcUnit, line) %>%
+  summarise(Response = mean(Response)) %>% 
+  # they changed the API 
+  rename(block_id = BlockID,
+         drug_row = DrugRow, 
+         drug_col = DrugCol, 
+         response = Response, 
+         conc_r = ConcRow, 
+         conc_c = ConcCol, 
+         conc_r_unit = ConcUnit,
+         replicate = Replicate) %>% 
+  mutate(conc_c_unit = conc_r_unit) %>% 
+  # fix wrong negative controls
+  ungroup() %>%
+  separate(block_id, c("ctrl_1", "ctrl_2"), remove = FALSE, sep = "_") %>% 
+  #filter(ctrl_1 != drug_row & drug_col == "DMSO")
+  mutate(Row_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
+                       Col,
+                       Row),
+         Col_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
+                       Row,
+                       Col),
+         conc_r_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
+                       conc_c,
+                       conc_r),
+         conc_c_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
+                       conc_r,
+                       conc_c)) %>%
+  dplyr::select(-ctrl_1, -ctrl_2, -Row, -Col, -conc_r, -conc_c) %>%
+  dplyr::select(block_id,
+                drug_row, 
+                drug_col,
+                Row = Row_t,
+                Col = Col_t, 
+                conc_r = conc_r_t,
+                conc_c = conc_c_t,
+                everything())
+
+save(syn_table, file = "syn_table_targeted_complete_valid.Rdata")
+```
+
+
+I perform a sanity check. 
+
+```{r}
+load("syn_table_targeted_complete_valid.Rdata")
+
+f <- syn_table %>% filter(block_id == "Everolimus_AZD5363", line == "D013T01", replicate == 1) %>% 
+  ungroup() %>% 
+  dplyr::select(-replicate)
+
+# toruble shooting
+me = c("ZIP", "HSA", "Bliss", "Loewe")
+m = me[1]
+f
+```
+
+I visaulize the matrix of responses 
+
+```{r}
+syn_table %>% filter(replicate ==1) %>% 
+  mutate(conc_r = factor(conc_r),
+         conc_c = factor(conc_c)) %>%
+  ggplot(aes(conc_r, conc_c, fill = response)) + 
+  geom_tile() + 
+  scale_fill_viridis_c() + 
+  facet_grid(block_id ~ line) + 
+  theme_cowplot()
+```
+
+* Some concentrations of Napa_Suni are missing. I check if some of the data was lost on the way.
+* D093N11 is not interpretable and should be removed. 
+
+```{r}
+# syn_table shows the missing data
+syn_table %>% 
+  group_by(block_id) %>% 
+  summarise(n = n()) %>% 
+  filter(n != max(n))
+
+# ctg_norm is not ok
+ctg_data %>% 
+  mutate(block_id = paste(drug, sep = "_")) %>% 
+  group_by(block_id) %>% 
+  summarise(n = n()) %>% 
+  count(n)
+
+# I filter n = 130, 104, 416
+ctg_data %>% 
+  mutate(block_id = paste(drug, sep = "_")) %>% 
+  group_by(block_id) %>% 
+  summarise(n = n()) %>% 
+  filter(n %in% c(364, 104, 416))
+```
+
+It seems like these combinations are not in the raw data. I check the annotation table.
+
+```{r}
+read_csv(here("anno/combi_validation_robot.csv")) %>% 
+  separate(drug_pair_conc, c("drug_1", "drug_2", "conc_1", "conc_2"), 
+           remove = FALSE, sep = "_") %>%
+  mutate(block_id = paste(drug, sep = "_")) %>% 
+  group_by(block_id) %>% 
+  summarise(n = n())
+```
+
+
+I store a dataframe with a drug-response table. 
+
+```{r}
+syn_shape <- syn_table %>% 
+  nest(-line, -replicate) %>% 
+  mutate(reshaped = map(data, ~ ReshapeData(.x,
+                                            data.type = "viability",
+                                            impute = TRUE, 
+                                            noise = TRUE, 
+                                            correction = "all")))
+```
+
+
+Now having this wrangled dataframe and an own function in place, I calculate synergies. 
+
+```{r, warning=FALSE, message=FALSE, eval = TRUE}
+syn_scores <- syn_table %>% 
+  #filter(block_id == "Everolimus_AZD5363") %>%
+  group_by(line, replicate , block_id) %>% 
+  do(tidy_synergy(df = ., me = c("ZIP", "HSA", "Bliss", "Loewe"))) 
+
+syn_scores <- syn_scores %>%
+  ungroup() %>%
+  #complete the df for scores that could not be calculated
+  mutate(method = as.factor(method),
+         line = as.factor(line)) %>% 
+  complete(block_id, method, replicate, line) %>%
+  mutate(score_average = ifelse(is.nan(score_average), NA, score_average))
+
+
+save(syn_scores, file = "syn_scores_targeted_complete_valid.Rdata")
+```
+
+
+After the values have been calculated I go on and check the distribution of scores.
+
+```{r}
+order <- syn_scores %>% 
+  filter(line != "D093N11") %>% 
+  group_by(block_id) %>% 
+  summarise(mean = mean(score_average)) %>% 
+  arrange(mean) %>% 
+  .$block_id
+
+syn_scores %>% 
+  filter(line != "D093N11") %>%
+  mutate(block_id = factor(block_id, levels = order)) %>%
+  ggplot(aes(score_average, block_id, color = line)) + 
+  geom_vline(xintercept = 0) +
+  geom_jitter(height = 0.1, width = 0) +
+  facet_wrap(~ method ) + 
+  theme_cowplot() + 
+  scale_colour_brewer(type = "qual", palette = 3)
+```
+
+I wonder it synergy scores correlated well between replicates. 
+
+```{r}
+r <- syn_scores %>%
+  filter(line != "D093N11") %>%
+  mutate(id = paste(block_id, line, method, sep = "_")) %>%
+  dplyr::select(replicate, score_average, id) %>%
+  tidyr::spread(replicate, score_average) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  dplyr::select(rep1, rep2) %>% 
+  as.matrix() %>%
+  cor(method = "spearman") %>%
+  .["rep1", "rep2"]
+
+syn_scores %>% 
+  filter(line != "D093N11") %>%
+  mutate(id = paste(block_id, line, method, sep = "_")) %>%
+  dplyr::select(replicate, score_average, id) %>%
+  tidyr::spread(replicate, score_average) %>% 
+  rename(rep1 = `1`) %>%
+  rename(rep2 = `2`) %>%
+  ggplot(aes(rep1, rep2)) + 
+  geom_point(alpha = 0.2) +
+  #geom_point(alpha = 0.2, aes(color = ctrl)) + 
+  #scale_color_manual(values=c("#E69F00", "#999999", "#56B4E9")) +
+  geom_abline(intercept = 0, slope = 1) +
+  #geom_hline(yintercept = 1) +
+  theme_classic() + 
+  ggtitle(paste0("r (spearman) = ", r %>% round(2))) + 
+  xlab("replicate 1") + 
+  ylab("replicate 2")
+```
+
+The correlation is okayish
+I decide to fit a linear model of both replicate and block_id on the data
+
+```{r}
+syn_collapsed <- syn_scores %>% 
+  filter(line != "D093N11") %>%
+  group_by(block_id, method, line) %>% 
+  summarise(score = mean(score_average))
+
+# lm(score ~ block_id, data = syn_collapsed %>% filter(method == "ZIP")) %>% summary()
+# lm(score ~ block_id, data = syn_collapsed %>% filter(method == "Bliss")) %>% summary()
+# lm(score ~ block_id, data = syn_collapsed %>% filter(method == "Loewe")) %>% summary()
+# lm(score ~ block_id, data = syn_collapsed %>% filter(method == "HSA")) %>% summary()
+
+lm(score ~ block_id + method, data = syn_collapsed) %>% summary()
+```
+
+
+```{r}
+lm(score ~ block_id + method, data = syn_collapsed %>% filter(line != "D093N11")) %>% broom::tidy() %>% 
+  mutate(q = p.adjust(p.value, method = "bonferroni")) %>% 
+  filter(q < 0.05, grepl(pattern = "block", x = term)) %>% 
+  mutate(term = substr(term, 9, nchar(term))) %>% 
+  arrange(desc(estimate))
+```
+
+
+```{r}
+syn_scores %>% write_csv("synergy_validation.csv")
+```
+

@@ -1,5 +1,0 @@
-"0","knitr::opts_chunk$set(echo = TRUE)"
-"0","knitr::opts_chunk$set(fig.width=9.5, fig.height=6) "
-"0","# Set some global knitr options"
-"0","library(""knitr"")"
-"0","opts_chunk$set(tidy=TRUE, tidy.opts=list(blank=FALSE, width.cutoff=60), cache=TRUE, messages=FALSE)"

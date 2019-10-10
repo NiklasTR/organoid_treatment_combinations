@@ -1,1 +1,0 @@
-{"conditions":[[0,"`stat_bin()` using `bins = 30`. Pick better value with `binwidth`.\n"],[1,"Removed 167 rows containing non-finite values (stat_bin)."]],"height":8.000000000000000,"size_behavior":1,"width":12.00000000000000}

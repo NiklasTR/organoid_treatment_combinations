@@ -1,5 +1,0 @@
-"0","library(readr)"
-"2","Error: package or namespace load failed for 'readr' in dyn.load(file, DLLpath = DLLpath, ...):
- unable to load shared object '/Library/Frameworks/R.framework/Versions/3.4/Resources/library/readr/libs/readr.so':
-  `maximal number of DLLs reached...
-"

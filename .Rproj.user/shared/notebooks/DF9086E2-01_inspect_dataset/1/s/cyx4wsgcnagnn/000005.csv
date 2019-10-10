@@ -1,8 +1,0 @@
-"0","ctg_data %>% "
-"0","  filter(date == ""171212"" & line == ""19"") %>%"
-"0","  select(pcount, well, id) %>%"
-"0","  spread(id, pcount) %>%"
-"0","  select(-well) %>%"
-"0","  as.data.frame() %>%"
-"0","  cor() %>%"
-"0","  pheatmap()"

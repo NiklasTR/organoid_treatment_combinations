@@ -1,8 +1,0 @@
-"0","syn_mat %>% filter(line == ""07"", BlockID == boi, Replicate == 1) %>%
-  ReshapeData(., data.type = ""viability"") %>%
-  CalculateSynergy(method = ""ZIP"", correction = TRUE) %>%
-  PlotSynergy(type = ""all"", save.file = FALSE)
-"
-"2","NaNs produced"
-"2","NaNs produced"
-"2","NaNs produced"

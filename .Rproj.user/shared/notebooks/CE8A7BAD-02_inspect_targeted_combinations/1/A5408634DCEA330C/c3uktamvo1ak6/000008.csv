@@ -1,8 +1,0 @@
-"0","#I load an excel table with the officila plate barcodes 
-barcodes <- read_excel(""~/tas/data/barcodes/Organoid-Screening-Database-and-Barcodes.xlsx"", 
-    sheet = ""Combinations"") drop_na() %>% rename(planned_date = `Screening Date`, assay = `Image/CTG`)
-"
-"2","Error: unexpected symbol in:
-""barcodes <- read_excel(""~/tas/data/barcodes/Organoid-Screening-Database-and-Barcodes.xlsx"", 
-    sheet = ""Combinations"") drop_na""
-"

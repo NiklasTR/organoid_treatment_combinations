@@ -1,4 +1,0 @@
-"0","tas_syn %>% "
-"0","  ggplot(aes(score_average)) +"
-"0","  geom_histogram() +"
-"0","  facet_grid(line ~ method)"

@@ -1,0 +1,15 @@
+base
+BiocStyle
+knitr
+tidyverse
+ggplot2
+tibble
+tidyr
+readr
+purrr
+dplyr
+pheatmap
+platetools
+viridisLite
+viridis
+bindrcpp

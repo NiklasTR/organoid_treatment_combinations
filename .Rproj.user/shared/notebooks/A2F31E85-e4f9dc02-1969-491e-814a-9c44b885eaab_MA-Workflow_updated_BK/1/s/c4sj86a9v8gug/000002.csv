@@ -1,6 +1,0 @@
-"0","SDRF <- read.delim("
-"0","url(""http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2967/E-MTAB-2967.sdrf.txt""))"
-"2","URL 'http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2967/E-MTAB-2967.sdrf.txt': status was 'Couldn't connect to server'"
-"2","Error in open.connection(file, ""rt"") : 
-  cannot open the connection to 'http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2967/E-MTAB-2967.sdrf.txt'
-"
