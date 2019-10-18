@@ -1,6 +1,8 @@
 ---
 title: "Tidy and collection follow-up data"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
 ```{r}
@@ -512,7 +514,8 @@ syn_table %>% filter(replicate ==1) %>%
   geom_tile() + 
   scale_fill_viridis_c() + 
   facet_grid(block_id ~ line) + 
-  theme_cowplot()
+  theme_cowplot()+ 
+  ggsave("response_overview.pdf", height = 15, width = 17)
 ```
 
 * Some concentrations of Napa_Suni are missing. I check if some of the data was lost on the way.
@@ -601,7 +604,7 @@ syn_scores %>%
   mutate(block_id = factor(block_id, levels = order)) %>%
   ggplot(aes(score_average, block_id, color = line)) + 
   geom_vline(xintercept = 0) +
-  geom_jitter(height = 0.1, width = 0) +
+  geom_jitter(height = 0.1, width = 0.1) +
   facet_wrap(~ method ) + 
   theme_cowplot() + 
   scale_colour_brewer(type = "qual", palette = 3)
@@ -641,6 +644,29 @@ syn_scores %>%
   ylab("replicate 2")
 ```
 
+```{r}
+order_line <- syn_scores %>% 
+  filter(line != "D093N11") %>% 
+  group_by(line) %>% 
+  summarise(mean = mean(score_average)) %>% 
+  arrange(mean) %>% 
+  .$line
+
+syn_scores %>% 
+  filter(line != "D093N11") %>%
+  mutate(line = factor(line, levels = order_line)) %>%
+  ggplot(aes(score_average, line, color = block_id)) + 
+  geom_vline(xintercept = 0) +
+  geom_jitter(height = 0.1, width = 0.1) +
+  facet_wrap(~ method ) + 
+  theme_cowplot() + 
+  scale_colour_brewer(type = "qual", palette = 3)
+  
+```
+
+
+
+
 The correlation is okayish
 I decide to fit a linear model of both replicate and block_id on the data
 
@@ -659,12 +685,39 @@ lm(score ~ block_id + method, data = syn_collapsed) %>% summary()
 ```
 
 
+I wonder if certain subtypes are becoming obvious
+
+```{r}
+syn_collapsed %>% 
+  ungroup() %>%
+  filter(method == "ZIP") %>% 
+  dplyr::select(line, score, block_id, -method) %>% 
+  
+  spread(line, score) %>% 
+  as.data.frame() %>% 
+  column_to_rownames("block_id") %>% 
+  pheatmap::pheatmap()
+```
+
 ```{r}
 lm(score ~ block_id + method, data = syn_collapsed %>% filter(line != "D093N11")) %>% broom::tidy() %>% 
   mutate(q = p.adjust(p.value, method = "bonferroni")) %>% 
   filter(q < 0.05, grepl(pattern = "block", x = term)) %>% 
   mutate(term = substr(term, 9, nchar(term))) %>% 
   arrange(desc(estimate))
+```
+
+```{r}
+syn_collapsed %>%
+  ungroup() %>%
+filter(line != "D093N11") %>%
+  mutate(block_id = factor(block_id, levels = order)) %>%
+  ggplot(aes(score, block_id, color = line)) + 
+  geom_vline(xintercept = 0) +
+  geom_jitter(height = 0.1, width = 0.1) +
+  facet_wrap(~ method ) + 
+  theme_cowplot() + 
+  scale_colour_brewer(type = "qual", palette = 3)
 ```
 
 
