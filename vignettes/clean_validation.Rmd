@@ -25,17 +25,17 @@ library(PharmacoGx)
 library(reshape2)
 ```
 
-I source a tidy synergy function. 
+## load data
 
 ```{r}
-library(synergyfinder)
-
-source(here::here("src/data/make_ctg_data.R"))
+#source(here::here("src/data/make_ctg_data.R"))
 #source(here::here("src/data/"))
 
 ctg_data <- read_csv(here::here("data/processed/ctg_data.csv"))
 ctg_loess <- read_csv(here::here("data/processed/ctg_loess.csv"))
 ctg_norm <- read_csv(here::here("data/processed/ctg_norm.csv"))
+syn_table <- read_csv(here::here("data/processed/synergy_input.csv"))
+syn_scores <- read_csv(here::here("data/processed/synergy_scores.csv"))
 ```
 
 
@@ -108,6 +108,7 @@ Now I look at the distribution of controls in the first screening replicate.
 coi <- c("DMSO")
 
 ctg_loess %>%
+  mutate(date = as.character(date)) %>%
   filter(drug_1 %in% coi & drug_2 %in% coi) %>%
   ggplot(aes(line, pcount_norm, color = date)) +
   #geom_violin(aes(group = drug)) +
@@ -315,109 +316,18 @@ ctg_norm <- ctg_norm %>%
 
 # Calculating synergy scores
 I consider using the "synergyfinder" package, published by He et al. at the FIMM. 
-First I have to wrangle the data into a standardized input format. This is an ugly peace of code. 
+First I wrangled the data into a standardized input format.
 
-```{r, warning=FALSE, message=FALSE, eval = TRUE}
-df <- ctg_norm
-#not a universal function
-syn_table <- df %>%
-  #filter(drug != "DMSO_DMSO") %>%
-  #filter(drug_1 != "DMSO") %>%
-  #filter(drug_2 != "DMSO") %>%
-  rename(rv = viability) %>%
-  #setup the easy stuff
-  dplyr::transmute(
-    BlockID = paste(drug, sep = "_"),
-         Response = rv*100,
-         Replicate = replicate,
-         DrugRow = drug_1,
-         DrugCol = drug_2,
-         #build matrix
-         Row = ifelse(drug_1 != "DMSO", as.numeric(conc_1), 6),
-         Col = ifelse(drug_2 != "DMSO", as.numeric(conc_2), 6),
-         #define concentrations
-         ConcRow = 10/(5^(as.numeric(conc_1)-1)),
-         ConcCol = 10/(5^(as.numeric(conc_2)-1)),
-         ConcRow = ifelse(drug_1 != "DMSO", ConcRow, 0),
-         ConcCol = ifelse(drug_2 != "DMSO", ConcCol, 0),
-         ConcUnit = "uM",
-    line = line
-         ) %>%  arrange(BlockID, Replicate, Row) 
-
-#Next I add the DMSO controls
-syn_table_p2 <- rbind(syn_table %>% filter(DrugCol != "DMSO"),
-                      
-                      syn_table %>% filter(DrugCol == "DMSO") %>%
-                      select(-BlockID)  %>%
-                      mutate(BlockID = map(DrugRow , ~ syn_table %>% 
-                                       filter(DrugCol != "DMSO" & grepl(BlockID, pattern = .x)) %>% 
-                         distinct() %>%
-                         dplyr::select(BlockID))) %>% unnest() %>% distinct(),
-                      
-                      syn_table %>% filter(BlockID == "DMSO_DMSO") %>%
-                      select(-BlockID)  %>%
-                      mutate(BlockID = map(DrugRow , ~ syn_table %>% 
-                                       filter(DrugCol != "DMSO" & DrugRow != "DMSO") %>% 
-                         distinct() %>%
-                         dplyr::select(BlockID))) %>% unnest() %>% distinct() 
-  )
-
-syn_table <- syn_table_p2 %>% 
-  group_by(BlockID, Replicate, DrugRow,
-           DrugCol, Row, Col, ConcRow, ConcCol, ConcUnit, line) %>%
-  summarise(Response = mean(Response)) %>% 
-  # they changed the API 
-  rename(block_id = BlockID,
-         drug_row = DrugRow, 
-         drug_col = DrugCol, 
-         response = Response, 
-         conc_r = ConcRow, 
-         conc_c = ConcCol, 
-         conc_r_unit = ConcUnit,
-         replicate = Replicate) %>% 
-  mutate(conc_c_unit = conc_r_unit) %>% 
-  # fix wrong negative controls
-  ungroup() %>%
-  separate(block_id, c("ctrl_1", "ctrl_2"), remove = FALSE, sep = "_") %>% 
-  #filter(ctrl_1 != drug_row & drug_col == "DMSO")
-  mutate(Row_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
-                       Col,
-                       Row),
-         Col_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
-                       Row,
-                       Col),
-         conc_r_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
-                       conc_c,
-                       conc_r),
-         conc_c_t = if_else(ctrl_1 != drug_row & drug_col == "DMSO",
-                       conc_r,
-                       conc_c)) %>%
-  dplyr::select(-ctrl_1, -ctrl_2, -Row, -Col, -conc_r, -conc_c) %>%
-  dplyr::select(block_id,
-                drug_row, 
-                drug_col,
-                Row = Row_t,
-                Col = Col_t, 
-                conc_r = conc_r_t,
-                conc_c = conc_c_t,
-                everything())
-
-save(syn_table, file = "syn_table_targeted_complete_valid.Rdata")
-```
-
-
-I perform a sanity check. 
+I perform a sanity check after preparing the data for synergy exploration.
 
 ```{r}
-load("syn_table_targeted_complete_valid.Rdata")
-
 f <- syn_table %>% filter(block_id == "Everolimus_AZD5363", line == "D013T01", replicate == 1) %>% 
   ungroup() %>% 
   dplyr::select(-replicate)
 
-# toruble shooting
-me = c("ZIP", "HSA", "Bliss", "Loewe")
-m = me[1]
+# trouble shooting
+# me = c("ZIP", "HSA", "Bliss", "Loewe")
+# m = me[1]
 f
 ```
 
@@ -472,39 +382,9 @@ read_csv(here("anno/combi_validation_robot.csv")) %>%
 ```
 
 
-I store a dataframe with a drug-response table. 
+## synergy calculation
 
-```{r}
-syn_shape <- syn_table %>% 
-  nest(-line, -replicate) %>% 
-  mutate(reshaped = map(data, ~ ReshapeData(.x,
-                                            data.type = "viability",
-                                            impute = TRUE, 
-                                            noise = TRUE, 
-                                            correction = "all")))
-```
-
-
-Now having this wrangled dataframe and an own function in place, I calculate synergies. 
-
-```{r, warning=FALSE, message=FALSE, eval = TRUE}
-syn_scores <- syn_table %>% 
-  #filter(block_id == "Everolimus_AZD5363") %>%
-  group_by(line, replicate , block_id) %>% 
-  do(tidy_synergy(df = ., me = c("ZIP", "HSA", "Bliss", "Loewe"))) 
-
-syn_scores <- syn_scores %>%
-  ungroup() %>%
-  #complete the df for scores that could not be calculated
-  mutate(method = as.factor(method),
-         line = as.factor(line)) %>% 
-  complete(block_id, method, replicate, line) %>%
-  mutate(score_average = ifelse(is.nan(score_average), NA, score_average))
-
-
-save(syn_scores, file = "syn_scores_targeted_complete_valid.Rdata")
-```
-
+Now having this wrangled dataframe and an own function in place, I calculated synergies by calling the "calculate_synergy.R" script. 
 
 After the values have been calculated I go on and check the distribution of scores.
 
@@ -542,13 +422,17 @@ r <- syn_scores %>%
   cor(method = "spearman") %>%
   .["rep1", "rep2"]
 
-syn_scores %>% 
+df <- syn_scores %>% 
   filter(line != "D093N11") %>%
   mutate(id = paste(block_id, line, method, sep = "_")) %>%
   dplyr::select(replicate, score_average, id) %>%
   tidyr::spread(replicate, score_average) %>% 
   rename(rep1 = `1`) %>%
-  rename(rep2 = `2`) %>%
+  rename(rep2 = `2`) 
+
+df %>% write_csv(here::here("reports/plot_data/correlation_synergy.csv"))
+
+df %>%
   ggplot(aes(rep1, rep2)) + 
   geom_point(alpha = 0.2) +
   #geom_point(alpha = 0.2, aes(color = ctrl)) + 
@@ -558,7 +442,9 @@ syn_scores %>%
   theme_classic() + 
   ggtitle(paste0("r (spearman) = ", r %>% round(2))) + 
   xlab("replicate 1") + 
-  ylab("replicate 2")
+  ylab("replicate 2") + 
+  coord_fixed() + 
+  ggsave(here::here("reports/figures/correlation_synergy.pdf"), width = 4, height = 4)
 ```
 
 ```{r}
@@ -590,8 +476,11 @@ I decide to fit a linear model of both replicate and block_id on the data
 ```{r}
 syn_collapsed <- syn_scores %>% 
   filter(line != "D093N11") %>%
+  filter(block_id != "Vorinostat_EHMT-Inh.") %>%
   group_by(block_id, method, line) %>% 
   summarise(score = mean(score_average))
+
+syn_collapsed %>% write_csv(here("data/processed/synergy_simplified.csv"))
 
 # lm(score ~ block_id, data = syn_collapsed %>% filter(method == "ZIP")) %>% summary()
 # lm(score ~ block_id, data = syn_collapsed %>% filter(method == "Bliss")) %>% summary()
@@ -613,16 +502,24 @@ syn_collapsed %>%
   spread(line, score) %>% 
   as.data.frame() %>% 
   column_to_rownames("block_id") %>% 
-  pheatmap::pheatmap()
+  pheatmap::pheatmap(filename = here::here("reports/figures/heatmap_zip_line.pdf"))
 ```
 
+
 ```{r}
-lm(score ~ block_id + method, data = syn_collapsed %>% filter(line != "D093N11")) %>% broom::tidy() %>% 
+set.seed(1234)
+
+model_estimate <- lm(score ~ block_id + method, data = syn_collapsed %>% filter(line != "D093N11")) %>% broom::tidy() %>% 
   mutate(q = p.adjust(p.value, method = "bonferroni")) %>% 
   filter(q < 0.05, grepl(pattern = "block", x = term)) %>% 
   mutate(term = substr(term, 9, nchar(term))) %>% 
   arrange(desc(estimate))
+
+model_estimate %>% write_csv(here::here("reports/tables/lm_synergy.csv"))
+
+model_estimate
 ```
+
 
 ```{r}
 syn_collapsed %>%
@@ -634,10 +531,7 @@ filter(line != "D093N11") %>%
   geom_jitter(height = 0.1, width = 0.1) +
   facet_wrap(~ method ) + 
   theme_cowplot() + 
-  scale_colour_brewer(type = "qual", palette = 3)
-```
-
-
-```{r}
-syn_scores %>% write_csv("synergy_validation.csv")
+  scale_colour_brewer(type = "qual", palette = 3) + 
+  # coord_fixed() +
+  ggsave(here::here("reports/figures/synergy_line.pdf"))
 ```
