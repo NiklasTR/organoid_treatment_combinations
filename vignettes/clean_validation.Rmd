@@ -32,6 +32,10 @@ library(synergyfinder)
 
 source(here::here("src/data/make_ctg_data.R"))
 #source(here::here("src/data/"))
+
+ctg_data <- read_csv(here::here("data/processed/ctg_data.csv"))
+ctg_loess <- read_csv(here::here("data/processed/ctg_loess.csv"))
+ctg_norm <- read_csv(here::here("data/processed/ctg_norm.csv"))
 ```
 
 
@@ -66,25 +70,8 @@ ctg_data %>% ggplot(aes(row_num, pcount)) + geom_point() +
   facet_wrap(~id, nrow = 4) + theme_bw() + ggtitle("Spatial effects of columns")
 ```
 
-I apply a conservative loess fit for both columns and rows. 
-
-```{r}
-ctg_loess <- ctg_data %>% dplyr::select(row_num, col_num, pcount, id) %>% 
-  # na values
-  drop_na() %>%
-  #set the ctrl column 13 to NA
-  #mutate(pcount = ifelse(col_num == 13, NA, pcount)) %>%
-  split(.$id) %>% lapply(function(s){
-  ## loess fit. family is 'symmetric' to be robust to outliers
-  fit <- loess(pcount ~ row_num + col_num, data=s, family='symmetric')
-  ## apply normalization
-  tibble(norm_fac = fit$fitted) %>% cbind(s %>% drop_na(),.) %>% 
-    mutate(pcount_norm = pcount - (norm_fac - median(norm_fac)))
-}) %>% bind_rows() %>% full_join(ctg_data)
-```
-
-
-Now I plot the results for rows and columns
+I applied a conservative loess fit for both columns and rows. 
+I plot the results for rows and columns below.
 
 ```{r}
 ctg_loess %>% ggplot(aes(row_num, pcount_norm)) + geom_point() + 
@@ -254,20 +241,7 @@ ctg_loess %>%
 
 #Normalization 
 
-At first glance, the majority of the screen is well behaved. I perform plate-wise noramlization to see wether I can also recover plates with differring plates.
-
-
-```{r}
-ctg_norm <- ctg_loess %>% 
-  left_join(., ctg_loess %>% 
-              filter(drug == "DMSO_DMSO") %>%
-            group_by(id) %>% 
-              summarise(dmso_solo_id = mean(pcount_norm))) %>%
-  mutate(viability = pcount_norm/dmso_solo_id) %>% 
-  #I crop the minimal viability to be zero
-  mutate(viability_uncropped = viability) %>% 
-  mutate(viability = if_else(viability < 0, 0, viability))
-```
+At first glance, the majority of the screen is well behaved. I performed plate-wise noramlization to see wether I can also recover plates with differring plates.
 
 I plot the correlation again. 
 
@@ -286,8 +260,7 @@ r <- ctg_norm %>%
   cor() %>%
   .["rep1", "rep2"]
 
-ctg_norm %>%
-  
+df <- ctg_norm %>%
   mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
   mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
   #filter(drug %in% coi) %>%
@@ -295,7 +268,11 @@ ctg_norm %>%
   dplyr::select(id, viability_uncropped, replicate) %>% 
   spread(replicate, viability_uncropped) %>% 
   rename(rep1 = `1`) %>%
-  rename(rep2 = `2`) %>%
+  rename(rep2 = `2`) 
+
+df %>% write_csv(here::here("results/plot_data/pearson_norm_valid.csv"))
+
+df %>%
   ggplot(aes(rep1, rep2)) + 
   geom_point(alpha = 0.2) +
   #geom_point(alpha = 0.2, aes(color = ctrl)) + 
