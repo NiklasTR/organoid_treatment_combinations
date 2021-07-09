@@ -1,3 +1,8 @@
+library(tidyverse)
+library(here)
+
+ctg_data <- read_csv(here("data/processed/ctg_data.csv"))
+
 ctg_loess <- ctg_data %>% dplyr::select(row_num, col_num, pcount, id) %>% 
   # na values
   drop_na() %>%

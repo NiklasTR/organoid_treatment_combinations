@@ -299,7 +299,6 @@ df %>%
 
 To avoid the simpson paradox, I also plot line-wise correlations.
 
-
 ```{r}
 ctg_norm %>%
   dplyr::select(id, viability, well) %>%
