@@ -212,7 +212,7 @@ r <- ctg_loess %>%
   cor() %>%
   .["rep1", "rep2"]
 
-ctg_loess %>%
+df <- ctg_loess %>%
   
   mutate(ctrl = ifelse(drug == "DMSO", "negative", "none")) %>% 
   mutate(ctrl = ifelse(drug == "Docetaxel_DMSO" & conc_1 %in% c(1:2), "positive", ctrl)) %>% 
@@ -221,7 +221,11 @@ ctg_loess %>%
   dplyr::select(id, pcount_norm, replicate) %>% 
   spread(replicate, pcount_norm) %>% 
   rename(rep1 = `1`) %>%
-  rename(rep2 = `2`) %>%
+  rename(rep2 = `2`)
+
+df  %>% write_csv(here::here("reports/plot_data/pearson_raw_valid.csv"))
+
+df %>%
   ggplot(aes(rep1, rep2)) + 
   geom_point(alpha = 0.2) +
   #geom_point(alpha = 0.2, aes(color = ctrl)) + 
@@ -234,7 +238,7 @@ ctg_loess %>%
   ylab("replicate 2") + 
   scale_y_continuous(breaks = c(0, 250000, 500000, 750000)) + 
   coord_fixed() + 
-  ggsave("pearson_raw_valid.pdf", width = 4, height = 4)
+  ggsave(here::here("reports/figures/pearson_raw_valid.pdf"), width = 4, height = 4)
   
   
 ```
@@ -271,7 +275,7 @@ df <- ctg_norm %>%
   rename(rep1 = `1`) %>%
   rename(rep2 = `2`) 
 
-df %>% write_csv(here::here("results/plot_data/pearson_norm_valid.csv"))
+df %>% write_csv(here::here("reports/plot_data/pearson_norm_valid.csv"))
 
 df %>%
   ggplot(aes(rep1, rep2)) + 
@@ -289,7 +293,7 @@ df %>%
   geom_hline(yintercept = 1) + 
   geom_vline(xintercept = 1) +
   coord_fixed() + 
-  ggsave("pearson_norm_valid.pdf", width = 4, height = 4)
+  ggsave(here::here("reports/figures/pearson_norm_valid.pdf"), width = 4, height = 4)
   
 ```
 
