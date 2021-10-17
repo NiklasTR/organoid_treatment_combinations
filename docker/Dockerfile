@@ -20,8 +20,8 @@ RUN R -e "install.packages(c('reshape2'), dependencies = TRUE)"
 ## Bioconductor
 RUN R -e "install.packages('BiocManager')"
 RUN R -e "BiocManager::install('splots',dependencies=TRUE)"
-RUN R -e "BiocManager::install('synergyfinder',dependencies=TRUE)"
-RUN R -e "BiocManager::install('PharmacoGx',dependencies=TRUE)"
+RUN R -e "BiocManager::install('synergyfinder',dependencies=TRUE)" #fixs
+RUN R -e "BiocManager::install('PharmacoGx',dependencies=TRUE)" #fix
 
 ## devtools and dependencies
 ### installing dependencies for ggrastr
