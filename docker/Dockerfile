@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
 RUN R -e "install.packages(c('janitor', 'ggdag', 'here', 'cowplot', 'gridExtra', 'pheatmap', 'princurve', 'scico', 'patchwork'), dependencies = TRUE)"
 RUN R -e "install.packages(c('ggsignif', 'broom', 'ggrepel', 'readxl', 'platetools'), dependencies = TRUE)"
 RUN R -e "install.packages(c('reshape2'), dependencies = TRUE)"
+RUN R -e "install.packages(c('vegan', 'SpatialExtremes', 'plotly', 'mice', 'pbapply', 'metR'), dependencies = TRUE)"
 
 ## Bioconductor
 RUN R -e "install.packages('BiocManager')"
